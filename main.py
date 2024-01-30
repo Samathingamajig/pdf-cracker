@@ -1,39 +1,19 @@
-import pikepdf
+import fitz
 import sys
-import io
 from multiprocessing import Pool
 
 
-def read_pdf(pdf_path: str) -> (io.BytesIO, IOError):
-    try:
-        with open(pdf_path, "rb") as f:
-            return io.BytesIO(f.read()), None
-    except IOError as e:
-        return None, e
-
-
-def has_password(bin_pdf: io.BytesIO) -> bool:
-    try:
-        # Try opening the PDF without a password
-        with pikepdf.open(bin_pdf):
-            return False
-    except pikepdf.PasswordError:
-        # Raised if the password is incorrect
-        return True
-    except Exception as e:
-        # Handle other exceptions such as file not found or not a PDF
-        print(f"An error occurred: {e}")
-        return False
-
-
-def is_password_correct(args):
-    bin_pdf, password = args
+def find_password_range(args: tuple[str, str]) -> (str, bool):
+    pdf_path, min_val, max_val = args
+    doc = fitz.open(pdf_path)
     try:
         # Try opening the PDF with the provided password
-        with pikepdf.open(bin_pdf, password=password):
-            return password, True
-    except pikepdf.PasswordError:
-        # Raised if the password is incorrect
+        for i in range(min_val, max_val):
+            password = f"{i:>04}"
+            res = doc.authenticate(password)
+            successful = res != 0
+            if successful:
+                return password, True
         return password, False
     except Exception as e:
         # Handle other exceptions such as file not found or not a PDF
@@ -48,22 +28,27 @@ def main() -> int:
 
     pdf_path = sys.argv[1]
 
-    bin_pdf, err = read_pdf(pdf_path)
-    if err is not None:
-        print(f"Error opening {pdf_path}: {err}")
+    try:
+        doc = fitz.open(pdf_path)
+    except fitz.FileNotFoundError:
+        print(f"Could not find file: {pdf_path}")
+        return 1
+    except Exception as e:
+        print(f"An exception occurred: {e}")
         return 1
 
-    if not has_password(bin_pdf):
+    if not doc.needs_pass:
         print(f"{pdf_path} is not protected by a password, or is invalid")
         return 1
 
-    cracked_password = ""
+    doc.close()
 
-    passwords = (f"{i:>04}" for i in range(10_000))
+    cracked_password = ""
 
     with Pool() as pool:
         results = pool.map(
-            is_password_correct, [(bin_pdf, password) for password in passwords]
+            find_password_range,
+            [(pdf_path, i, i + 500) for i in range(0, 10_000, 500)],
         )
 
         for password, cracked in results:
